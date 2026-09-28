@@ -14,9 +14,9 @@ PIZZA_SPEED = 300  # Píxeles por segundo.
 DOG_INTERVAL = 3.0
 MAX_DOGS = 8
 DOG_SIZE = (54, 64)
-DETECTION_RADIUS = 100
-DEALER_SPEED = 180
-DOG_SPEED = 45
+DETECTION_RADIUS = 300
+DEALER_SPEED = 450
+DOG_SPEED = 112.5
 DEALER_STARTING_LIVES = 3
 INVULNERABILITY_DURATION = 2.0
 INVULNERABILITY_BLINK_INTERVAL = 0.15
@@ -141,11 +141,20 @@ class PizzaSurvivor:
 
     def __init__(self):
         pygame.init()
+        pygame.mixer.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("Pizza Simulator")
         self.clock = pygame.time.Clock()
         self.bounds = self.screen.get_rect()
         self.asset_dir = Path(__file__).resolve().parent
+        self.score_font = pygame.font.Font(None, 36)
+        self.game_over_font = pygame.font.Font(None, 80)
+        self.soundtrack = self.asset_dir / "Soundtrack.mp3"
+        pygame.mixer.music.load(self.soundtrack)
+        pygame.mixer.music.set_volume(0.25)
+        self.shoot_sound = pygame.mixer.Sound(self.asset_dir / "Shoot.mp3")
+        self.hit_sound = pygame.mixer.Sound(self.asset_dir / "Hit.mp3")
+        self.life_lost_sound = pygame.mixer.Sound(self.asset_dir / "life_lost.mp3")
 
         self.icon = self.load_image("icon.png")
         pygame.display.set_icon(self.icon)
@@ -166,6 +175,9 @@ class PizzaSurvivor:
         self.dealer = Dealer(dealer_image, 368, 440)
         self.dog_image = dog_image
         self.dogs = []
+        self.score = 0
+        self.state = "playing"
+        self.elapsed_time = 0.0
         self.time_since_last_dog = 0.0
         self.pizzas = []
         self.time_since_last_pizza = 0.0
@@ -201,6 +213,7 @@ class PizzaSurvivor:
         self.pizzas.append(
             Pizza(self.pizza_image, self.dealer.rect.center, nearest_dog.rect.center)
         )
+        self.shoot_sound.play()
 
     def detect_hits(self):
         """Elimina cada perro y pizza que chocan, una vez por proyectil."""
@@ -224,13 +237,17 @@ class PizzaSurvivor:
 
         self.pizzas = pizzas_survivors
         self.dogs = [dog for dog in self.dogs if dog not in dogs_hit]
+        self.score += len(dogs_hit)
+        for _dog in dogs_hit:
+            self.hit_sound.play()
 
     def detect_dog_collisions(self):
         """Quita los perros que tocan al repartidor y aplica daño si puede."""
         remaining_dogs = []
         for dog in self.dogs:
             if dog.rect.colliderect(self.dealer.rect):
-                self.dealer.take_hit()
+                if self.dealer.take_hit():
+                    self.life_lost_sound.play()
             else:
                 remaining_dogs.append(dog)
         self.dogs = remaining_dogs
@@ -264,6 +281,10 @@ class PizzaSurvivor:
         return False
 
     def update(self, delta_time):
+        if self.state == "finished":
+            return
+
+        self.elapsed_time += delta_time
         self.dealer.update(delta_time)
 
         # Aparece un perro cada tres segundos hasta alcanzar el máximo.
@@ -293,6 +314,10 @@ class PizzaSurvivor:
 
         # El perro se elimina en el primer contacto, así no atraviesa al dealer.
         self.detect_dog_collisions()
+        if self.dealer.lives == 0:
+            self.state = "finished"
+            pygame.mixer.music.stop()
+            return
 
         self.time_since_last_pizza += delta_time
         if self.time_since_last_pizza >= PIZZA_INTERVAL:
@@ -314,13 +339,88 @@ class PizzaSurvivor:
                 topleft=(10 + life * (HEART_SIZE[0] + HEART_GAP), 10)
             )
             self.screen.blit(self.heart_image, heart_rect)
+        self.score_drawer()
         for dog in self.dogs:
             dog.draw(self.screen)
         for pizza in self.pizzas:
             pizza.draw(self.screen)
+        if self.state == "finished":
+            self.draw_game_over()
         pygame.display.flip()
 
+    def score_drawer(self):
+        """Dibuja el puntaje actual en la esquina superior derecha."""
+        label = "Score: "
+        gradient_start = (255, 0, 0)
+        gradient_end = (0, 0, 0)
+        x, y = 650, 10
+
+        # Interpola el color entre rojo y negro a lo largo de la etiqueta.
+        for index, character in enumerate(label):
+            blend = index / max(1, len(label) - 1)
+            color = tuple(
+                round(start + (end - start) * blend)
+                for start, end in zip(gradient_start, gradient_end)
+            )
+            character_surface = self.score_font.render(character, True, color)
+            self.screen.blit(character_surface, (x, y))
+            x += character_surface.get_width()
+
+        # El número queda negro, continuando el extremo final del degradado.
+        score_surface = self.score_font.render(str(self.score), True, gradient_end)
+        self.screen.blit(score_surface, (x, y))
+
+        minutes, seconds = divmod(int(self.elapsed_time), 60)
+        time_text = f"Time: {minutes}:{seconds:02d}"
+        time_width = self.score_font.size(time_text)[0]
+        time_x = 650 + (x + score_surface.get_width() - 650 - time_width) // 2
+        self.draw_gradient_text(time_text, time_x, y + self.score_font.get_linesize())
+
+    def draw_gradient_text(self, text, x, y, font=None, phase=0.0):
+        """Dibuja texto con un degradado rojo y negro desplazable."""
+        gradient_start = (255, 0, 0)
+        gradient_end = (0, 0, 0)
+        font = font or self.score_font
+        for index, character in enumerate(text):
+            blend = (index / max(1, len(text) - 1) + phase) % 1.0
+            color = tuple(
+                round(start + (end - start) * blend)
+                for start, end in zip(gradient_start, gradient_end)
+            )
+            character_surface = font.render(character, True, color)
+            self.screen.blit(character_surface, (x, y))
+            x += character_surface.get_width()
+
+    def draw_game_over(self):
+        """Dibuja el resultado final con un degradado animado."""
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((255, 255, 255, 150))
+        self.screen.blit(overlay, (0, 0))
+
+        animation_time = pygame.time.get_ticks() / 1000
+        title = "GAME OVER"
+        title_width = self.game_over_font.size(title)[0]
+        title_x = (SCREEN_WIDTH - title_width) // 2
+        title_y = SCREEN_HEIGHT // 2 - 100
+        phase = (animation_time * 0.5) % 1.0
+        self.draw_gradient_text(
+            title, title_x, title_y, self.game_over_font, phase
+        )
+
+        minutes, seconds = divmod(int(self.elapsed_time), 60)
+        final_lines = (
+            f"Score: {self.score}",
+            f"Time: {minutes}:{seconds:02d}",
+        )
+        line_y = title_y + self.game_over_font.get_linesize() + 12
+        for line in final_lines:
+            line_width = self.score_font.size(line)[0]
+            line_x = (SCREEN_WIDTH - line_width) // 2
+            self.draw_gradient_text(line, line_x, line_y)
+            line_y += self.score_font.get_linesize()
+
     def run(self):
+        pygame.mixer.music.play(-1)
         playing = True
         while playing:
             delta_time = self.clock.tick(FPS) / 1000
