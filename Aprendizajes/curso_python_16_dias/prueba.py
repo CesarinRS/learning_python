@@ -2,16 +2,50 @@
 This script is available for practices
 """
 
+def decorador_saludo(funcion):
+    print("Buenas tardes, su turno es:")
+    funcion()
+    print("Porfavor espere su turno")
 
-class Libro():
-    def __init__(self, titulo, autor, cantidad_paginas):
-        self.titulo = titulo
-        self.autor = autor
-        self.cantidad_paginas = cantidad_paginas
+def generador_turnos():
+    turno = 1
+    while True:
+        yield turno
+        turno += 1
 
-    def __str__(self):
-        return f'"{self.titulo}", de {self.autor}'
+def sesion():
 
-atomic_habits = Libro('Hábitos atomicos', 'James Clear', '235')
+    perfumes = generador_turnos()
+    medicamentos = generador_turnos()
+    cosmetologia = generador_turnos()
 
-print(f'El libro que acabo de comprar es: {atomic_habits}')
+    eleccion = input("Ingrese una opción para imprimir su ticket: \n'P' turno en área de perfumes\n'M' turno en área de medicamentos\n'C' turno en área de cósmeticos").lower()
+
+    def impresion_turno(eleccion):
+        return f"{eleccion.upper()}"
+
+
+    while eleccion == 'p':
+
+        decorador_saludo(impresion_turno(eleccion))
+        next(perfumes)
+        print(f"{eleccion.upper()} - {perfumes}")
+
+
+        if eleccion == 'm':
+            decorador_saludo(impresion_turno(eleccion))
+            next(medicamentos)
+            print(f"{eleccion.upper()} - {medicamentos}")
+
+
+        elif eleccion == 'c':
+            decorador_saludo(impresion_turno(eleccion))
+            next(cosmetologia)
+            print(f"{eleccion.upper()} - {cosmetologia}")
+
+
+        else:
+            break
+
+
+sesion()
